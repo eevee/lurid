@@ -150,6 +150,14 @@ uri_grammar.rule('relative-opaque', r"{relative_part} (?: [?] {query} )?")
 #uri_grammar.rule('URI-reference', r"{URI} | {relative-ref}")
 
 
+_default_ports = dict(
+    ftp=21,
+    http=80,
+    https=443,
+    ssh=22,
+)
+
+
 def _assemble(*parts):
     # TODO docs
     buf = []
@@ -430,6 +438,12 @@ class URI(object):
 
         self._port = port
 
+        self._recompute_authority()
+
+    def _recompute_authority(self):
+        # After changing userinfo, host, or port, reassemble the authority
+        # TODO does this need to exist, or should authority be lazy like
+        # everything else?  several things check _authority...
         self._authority = _assemble(
             ('', self._userinfo, '@'),
             ('', self._host, ''),
@@ -440,6 +454,77 @@ class URI(object):
         # called after every set
         if self._authority and self._path and self._path[0] != '/':
             self._path = '/' + self._path
+
+    @property
+    def host(self):
+        # Strip off square brackets.  IPv6 (and future IP address schemes)
+        # include them, but they're not really part of the address.  This is a
+        # clunky fix, but it works, because square brackets aren't legal
+        # anywhere else in a host.
+        return self._host.strip('[]')
+
+    @host.setter
+    def host(self, value):
+        # TODO validate
+
+        # Possibly add brackets for ipv6
+        if uri_grammar.match('IPv6address', value) or uri_grammar.match('IPvFuture', value):
+            value = '[' + value + ']'
+
+        self._host = value
+        self._recompute_authority()
+
+    @property
+    def raw_host(self):
+        return self._host
+
+
+    @property
+    def port(self):
+        if self._port is None or self._port == '':
+            try:
+                return _default_ports[self._scheme]
+            except KeyError:
+                return None
+        else:
+            # Must be an integer, or how the heck did it get here
+            return int(self._port)
+
+    @port.setter
+    def port(self, value):
+        if value is None:
+            self._port = None
+        elif not isinstance(value, int) or value < 0:
+            raise TypeError(
+                "Expected None or positive int; got {0!r}".format(value))
+        else:
+            self._port = str(value)
+
+        self._recompute_authority()
+
+    @property
+    def raw_port(self):
+        return self._port
+
+    @raw_port.setter
+    def raw_port(self, value):
+        # TODO validate
+        self._port = value
+        self._recompute_authority()
+
+
+    @property
+    def host_port(self):
+        return _assemble(
+            ('', self._host, ''),
+            (':', self._port, ''),
+        )
+
+    @host_port.setter
+    def host_port(self, value):
+        # TODO escaping?  stuff?  unclear how this should work
+        self._host, self._port = value.rsplit(':', 1)
+        self._recompute_authority()
 
 
     @property
