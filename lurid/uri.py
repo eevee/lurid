@@ -150,6 +150,8 @@ uri_grammar.rule('relative-opaque', r"{relative_part} (?: [?] {query} )?")
 # duplicates a bunch of tokens, which is illegal in a regex
 #uri_grammar.rule('URI-reference', r"{URI} | {relative-ref}")
 
+#{'IPv6address': None, 'IP_literal': None, 'fragment': 'frag', 'IPvFuture': None, 'reg_name': 'host', 'hier_part': '//host:80/path', 'path_rootless': None, 'host': 'host', 'path_abempty': '/path', 'authority': 'host:80', 'path_absolute': None, 'query': 'query', 'path_empty': None, 'scheme': 'foo', 'port': '80', 'userinfo': None}
+
 
 _default_ports = dict(
     ftp=21,
@@ -248,14 +250,23 @@ class URI(object):
     # Defaults, and documentation for the attributes
     # TODO more of these
     _scheme = None
+    _authority = None
     _userinfo = None
+    _host = None
+    _host_is_ipv6 = False
+    _port = None
+    _path = None
+    _query = None
+    _fragment = None
 
-    def __init__(self, string="", strict=True, encoding='utf8'):
-        """Parses a URI string."""
+
+    def __init__(self, strict=True, encoding='utf8'):
+        """Creates an empty URI.
+
+        If you want to parse a string, see `URI.parse`.
+        """
 
         self.strict = strict
-        self.original = string
-
         self._encoding = encoding
 
     @classmethod
@@ -306,15 +317,11 @@ class URI(object):
         )
 
     def __str__(self):
-        return self.original
+        return self.serialize()
 
     def __eq__(self, other):
-        # TODO this emulates the perl behavior but i am unsure about it still.
         if isinstance(other, URI):
-            return self.canonical == other.canonical
-
-        if isinstance(other, str):
-            return self.canonical == URI(other).canonical
+            return self.serialize() == other.serialize()
 
         return NotImplemented
 
@@ -374,17 +381,8 @@ class URI(object):
     # TODO and cached, with children busting caches of their parents, or maybe parents inspecting cache state of children
     # TODO the getters should probably reconstruct from parts
 
-    @property
-    def canonical(self):
-        # TODO this should probably do something with escapes and unicodes and whatnot
-        return _assemble(
-            ('', self.scheme, ':'),
-            ('', self.opaque, ''),
-            ('#', self.fragment, ''),
-        )
-
-    @property
-    def original(self):
+    def serialize(self):
+        """Returns the entire URI as a bytestring."""
         return _assemble(
             ('', self._scheme, ':'),
             ('', self.opaque, ''),
@@ -392,27 +390,6 @@ class URI(object):
             ('#', self._fragment and self._maybe_escape(self._fragment.encode('utf8'), also='#[]'), ''),
             #('#', self._fragment, ''),
         )
-
-    _scheme = None
-    _authority = None
-    _host = None
-    _host_is_ipv6 = False
-    _path = None
-
-    @original.setter
-    def original(self, string):
-        match = uri_grammar.match('URI', string) or uri_grammar.match('relative-ref', string)
-        if not match:
-            # The grammar is pretty lax; only very weird cases like '//a:b'
-            # actually get here
-            raise InvalidURIError(
-                "Can't make heads or tails of URI string {0!r}".format(string))
-
-        self._update_parts(match)
-
-        #{'IPv6address': None, 'IP_literal': None, 'fragment': 'frag', 'IPvFuture': None, 'reg_name': 'host', 'hier_part': '//host:80/path', 'path_rootless': None, 'host': 'host', 'path_abempty': '/path', 'authority': 'host:80', 'path_absolute': None, 'query': 'query', 'path_empty': None, 'scheme': 'foo', 'port': '80', 'userinfo': None}
-
-        self._original = string
 
     ### Scheme
 

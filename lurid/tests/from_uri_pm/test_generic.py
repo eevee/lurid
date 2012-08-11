@@ -14,7 +14,7 @@ def test_simple():
     assert foo.scheme == 'foo'
     assert foo.opaque == 'opaque'
     assert foo.fragment == 'frag'
-    assert foo.canonical == 'foo:opaque#frag'
+    assert foo.serialize() == 'foo:opaque#frag'
 
     # Scheme
     foo.scheme = "bar"
