@@ -3,14 +3,14 @@
 from lurid.uri import URI
 
 def test_simple():
-    uri = URI("http://[FEDC:BA98:7654:3210:FEDC:BA98:7654:3210]:80/index.html")
+    uri = URI.parse("http://[FEDC:BA98:7654:3210:FEDC:BA98:7654:3210]:80/index.html")
 
     assert str(uri) == "http://[FEDC:BA98:7654:3210:FEDC:BA98:7654:3210]:80/index.html"
     assert uri.host == "FEDC:BA98:7654:3210:FEDC:BA98:7654:3210"
     assert uri.host_port == "[FEDC:BA98:7654:3210:FEDC:BA98:7654:3210]:80"
     assert uri.port == 80
 
-    uri.port = None
+    del uri.port
     assert str(uri) == "http://[FEDC:BA98:7654:3210:FEDC:BA98:7654:3210]/index.html"
     # TODO not clear if this should include the port even when it doesn't exist
     # in the URI
@@ -36,7 +36,7 @@ def test_simple():
 
 
 def test_ftp():
-    uri = URI("ftp://ftp:@[3ffe:2a00:100:7031::1]")
+    uri = URI.parse("ftp://ftp:@[3ffe:2a00:100:7031::1]")
     assert str(uri) == "ftp://ftp:@[3ffe:2a00:100:7031::1]"
 
     assert uri.port == 21
@@ -48,5 +48,5 @@ def test_ftp():
 
 
 def test_localhost():
-    uri = URI("http://[::1]")
+    uri = URI.parse("http://[::1]")
     assert uri.host == "::1"

@@ -1,5 +1,6 @@
 import re
 import string
+import urllib
 
 # TODO use explicit u or b everywhere in here
 
@@ -160,6 +161,8 @@ _default_ports = dict(
 
 def _assemble(*parts):
     # TODO docs
+    # TODO this is just not flexible enough; there's no way to specify reserved
+    # chars for each particular part
     buf = []
     for part in parts:
         before, middle, after = part
@@ -172,40 +175,47 @@ def _assemble(*parts):
 
 
 class URI(object):
+    """Represents a parsed and mutable URI.  Attempts to follow RFC 3986, with
+    some concessions made for the real world.
 
-    # TODO turn this into a helpful comment or doc or something
-    '''
-    # URIs may take several forms:
-    # Absolute, hierarchical: scheme:
+    A URI consists of a hierarchy of components, as follows:
 
-    - scheme
-    - opaque (no longer exists, really; now is just a path)
-        - authority
-            - userinfo
-                - username
-                - password
-            - host
-                - hostname
-                - ipv4
-                - ipv6
-            - port
-        - path
-            - params
-        - query
-            - mapping
-    - fragment
+        - scheme
+        - opaque
+            - authority
+                - userinfo
+                    - username
+                    - password
+                - host
+                    - hostname
+                    - OR ipv4
+                    - OR ipv6
+                - port
+            - path
+                - params
+            - query
+                - mapping
+        - fragment
 
+    Some, all, or none of these may be present in any given URI.  The terms
+    "relative" and "absolute" are often used to describe URIs with some of
+    these components missing or present, but the terms are somewhat vague:
 
-    scheme://userinfo@authority:port/path?query#fragment
+    * A URI without a scheme is _scheme-relative_.
+    * A URI without an authority is _host-relative_.
+    * A URI whose path does not begin with a slash is _path-relative_.
 
-    scheme:opaque#fragment
-    scheme://authority/abs_path?query#fragment
-    scheme:/abs_path?query#fragment
-    //authority/abs_path?query#fragment
-    /abs_path?query#fragment
-    rel_path?query#fragment
+    This yields several categories of URIs.
 
-    '''
+        scheme://userinfo@authority:port/path?query#fragment
+        scheme:opaque#fragment
+        scheme://authority/abs_path?query#fragment
+        scheme:/abs_path?query#fragment
+        //authority/abs_path?query#fragment
+        /abs_path?query#fragment
+        rel_path?query#fragment
+
+    """
 
     # Based on the RFC's example regex, in appendix B.
     # This will match any arbitrary string, with potentially nonsensical
@@ -236,11 +246,58 @@ class URI(object):
     # TODO frozen uris -- could even be lazy and only store the string?
 
     # Defaults, and documentation for the attributes
+    # TODO more of these
     _scheme = None
+    _userinfo = None
 
-    def __init__(self, string="", strict=True):
+    def __init__(self, string="", strict=True, encoding='utf8'):
+        """Parses a URI string."""
+
         self.strict = strict
         self.original = string
+
+        self._encoding = encoding
+
+    @classmethod
+    def parse(cls, string, encoding='utf8'):
+        # TODO
+        assert isinstance(string, str)
+
+
+
+        self = cls(encoding='utf8')
+
+        # scheme:opaque#fragment
+        match = cls.simple_uri_rx.match(string)
+        if not match:
+            raise IMPOSSIBLE
+
+        matchdict = match.groupdict()
+
+        # Scheme is dead simple: no parts, no percent-escaping allowed.  It's
+        # also case-insensitive, so lowercase it to normalize
+        if matchdict['scheme'] is not None:
+            self.scheme = matchdict['scheme'].decode(encoding).lower()
+
+        # Authority needs some bonus parsing, conveniently done by the
+        # authority setter
+        if matchdict['authority'] is not None:
+            self.authority = matchdict['authority']
+
+        # Path may need munging...
+        self._path = matchdict['_path_thing']
+
+        # Query needs splitting
+        self._query = matchdict['query']
+
+        # Fragment needs unescaping
+        if matchdict['fragment'] is not None:
+            self.fragment = urllib.unquote(matchdict['fragment']).decode(encoding)
+
+        return self
+
+
+    ### Special methods
 
     def __repr__(self):
         return "<{cls}({str!r})>".format(
@@ -261,50 +318,13 @@ class URI(object):
 
         return NotImplemented
 
-    # TODO these should probably all be lazy
-    # TODO and cached, with children busting caches of their parents, or maybe parents inspecting cache state of children
-    # TODO the getters should probably reconstruct from parts
-
-    @property
-    def canonical(self):
-        # TODO this should probably do something with escapes and unicodes and whatnot
-        return _assemble(
-            ('', self.scheme, ':'),
-            ('', self.opaque, ''),
-            ('#', self.fragment, ''),
-        )
-
-    @property
-    def original(self):
-        return _assemble(
-            ('', self.raw_scheme, ':'),
-            ('', self.opaque, ''),
-            ('#', self.fragment, ''),
-        )
-
-    @original.setter
-    def original(self, string):
-        #if not string:
-        #    raise InvalidURIError("Empty string can't be a URI")
-
-        # scheme:opaque#fragment
-        #match = self.simple_uri_rx.match(string)
-        match = uri_grammar.match('URI', string) or uri_grammar.match('relative-ref', string)
-        if not match:
-            # This should actually be impossible; the string isn't empty, and
-            # the regexes match any one or more characters
-            # TODO i'm lying!  //a:b raises
-            raise InvalidURIError
-
-        self._update_parts(match)
-
-        #{'IPv6address': None, 'IP_literal': None, 'fragment': 'frag', 'IPvFuture': None, 'reg_name': 'host', 'hier_part': '//host:80/path', 'path_rootless': None, 'host': 'host', 'path_abempty': '/path', 'authority': 'host:80', 'path_absolute': None, 'query': 'query', 'path_empty': None, 'scheme': 'foo', 'port': '80', 'userinfo': None}
-
-        self._original = string
-
-
-
     def _update_parts(self, match):
+        """Given a match dict from the URI grammar, updates all the relevant
+        private attributes.  Parts with a match value of `None` will be
+        dutifully set to `None`.  Parts that don't appear in the match dict at
+        all will NOT be changed!
+        """
+
         if 'scheme' in match:
             self._scheme = match['scheme']
 
@@ -349,31 +369,76 @@ class URI(object):
         return re.sub(bad_char_rx, lambda m: "%{0:02X}".format(ord(m.group())), string)
 
 
-    # Scheme
+    ### Entire URI
+    # TODO these should probably all be lazy
+    # TODO and cached, with children busting caches of their parents, or maybe parents inspecting cache state of children
+    # TODO the getters should probably reconstruct from parts
+
     @property
-    def raw_scheme(self):
-        return self._scheme
+    def canonical(self):
+        # TODO this should probably do something with escapes and unicodes and whatnot
+        return _assemble(
+            ('', self.scheme, ':'),
+            ('', self.opaque, ''),
+            ('#', self.fragment, ''),
+        )
+
+    @property
+    def original(self):
+        return _assemble(
+            ('', self._scheme, ':'),
+            ('', self.opaque, ''),
+            # TODO yikes
+            ('#', self._fragment and self._maybe_escape(self._fragment.encode('utf8'), also='#[]'), ''),
+            #('#', self._fragment, ''),
+        )
+
+    _scheme = None
+    _authority = None
+    _host = None
+    _host_is_ipv6 = False
+    _path = None
+
+    @original.setter
+    def original(self, string):
+        match = uri_grammar.match('URI', string) or uri_grammar.match('relative-ref', string)
+        if not match:
+            # The grammar is pretty lax; only very weird cases like '//a:b'
+            # actually get here
+            raise InvalidURIError(
+                "Can't make heads or tails of URI string {0!r}".format(string))
+
+        self._update_parts(match)
+
+        #{'IPv6address': None, 'IP_literal': None, 'fragment': 'frag', 'IPvFuture': None, 'reg_name': 'host', 'hier_part': '//host:80/path', 'path_rootless': None, 'host': 'host', 'path_abempty': '/path', 'authority': 'host:80', 'path_absolute': None, 'query': 'query', 'path_empty': None, 'scheme': 'foo', 'port': '80', 'userinfo': None}
+
+        self._original = string
+
+    ### Scheme
 
     @property
     def scheme(self):
-        if self._scheme is not None:
-            return self._scheme.lower()
-
         return self._scheme
 
     @scheme.setter
     def scheme(self, string):
-        if string is not None and not uri_grammar.match('scheme', string):
-            raise InvalidURIError("Invalid scheme")
+        if not isinstance(string, unicode):
+            raise TypeError("Expected unicode, got: {0!r}".format(string))
+        if not uri_grammar.match('scheme', string):
+            raise InvalidURIError("Invalid scheme: {0!r}".format(string))
 
-        self._scheme = string
+        # Normalize: make it lowercase
+        self._scheme = string.lower()
 
+    @scheme.deleter
+    def scheme(self):
+        self._scheme = None
 
     # Opaque -- this is the scheme-specific bit
     @property
     def opaque(self):
         return _assemble(
-            ('//', self._authority, ''),
+            ('//', self.authority, ''),
             ('', self._path, ''),
             ('?', self._query, ''),
         )
@@ -390,64 +455,96 @@ class URI(object):
         match = uri_grammar.match('relative-opaque', string)
         self._update_parts(match)
 
+    ### Authority: userinfo, host, and port
 
     @property
     def authority(self):
-        return self._authority
+        # _assemble will return an empty string given all Nones
+        if self._userinfo is None and self._host is None and self._port is None:
+            return None
+
+        # Maybe add brackets around a v6 address
+        host = self.host
+        if host and self._host_is_v6:
+            host = u'[' + host + u']'
+
+        return _assemble(
+            #('', self._userinfo, '@'),
+            # TODO yikes
+            ('', self._userinfo and self._maybe_escape(self._userinfo.encode('utf8'), also='/?#[]@'), '@'),
+            ('', host, ''),
+            # TODO yikes
+            (':', self._port and str(self._port), ''),
+        )
 
     @authority.setter
-    def authority(self, string):
-        if string is None:
-            # TODO actually needs to clear out a few other things too
-            self._authority = None
-            return
+    def authority(self, value):
+        # TODO should this accept unicode assignment?  what does that imply?  similar to assigning to the entire query or path?
+        if isinstance(value, unicode):
+            value = str(value)
+        if not isinstance(value, str):
+            raise TypeError("Expected str, got {0!r}".format(value))
 
-        # Authority is a little tricky to escape manually.  It looks like:
-        #     userinfo @ host : port
-        # Port must be digits, but userinfo and host can ultimately be anything
-        # in unreserved or sub-delims.
-        # Note that this means gen-delims are disallowed entirely (except for
-        # :, allowed in userinfo only).
+        # TODO do this in several places...
+        # TODO this makes '' allowed even though it's technically relative...
+        if self.path and not self.path.startswith('/'):
+            raise InvalidURIError(
+                "Can't have an authority with a relative path: {0!r}".format(self.path))
 
-        # Find userinfo first
-        if '@' in string:
-            userinfo, string = string.split('@', 1)
+        # The only @ allowed anywhere in an authority is after the userinfo
+        if '@' in value:
+            self._userinfo, hostport = value.split('@', 1)
         else:
-            userinfo = None
+            self._userinfo = None
+            hostport = value
 
-        # And then the port
-        port = None
-        try:
-            colon_pos = string.rindex(':')
-        except ValueError:
-            pass
+        # Likewise, a : may only exist before the port, EXCEPT with IPv6+
+        # which are contained in square brackets for exactly this reason
+        maybe_host, maybe_colon, maybe_port = hostport.rpartition(':')
+        if not maybe_colon or ']' in maybe_port:
+            # Either colon wasn't found, partition sucks, there's no port;
+            # OR there's a bracket after the final colon, so this is a
+            # bracketed IP address and there's still no port
+            host = hostport
+            port = None
         else:
-            possible_port = string[colon_pos + 1:]
-            if possible_port == '' or possible_port.isdigit():
-                string = string[:colon_pos]
-                port = possible_port
+            # It's a port!
+            host = maybe_host
+            port = maybe_port
 
-        # Escape and assign userinfo
-        if userinfo:
-            userinfo = self._maybe_escape(userinfo, also='[]/?#@')
-        self._userinfo = userinfo
+        # Host is allowed to contain percent-encoding (well, if it's a
+        # domain, but it's not valid otherwise anyway).
+        # We can also remove square brackets with wild abandon here: they're
+        # only used as delimiters for IPv6 addresses, which we don't want, and
+        # they aren't legal anywhere else.
+        self.host = urllib.unquote(host).decode(self._encoding).strip('[]')
 
-        host = self._maybe_escape(string, also='[]:/?#@')
-        match = uri_grammar.match('host', host)
-        self._update_parts(match)
+        # Port must be either None, empty, or a number
+        if port == '' or port is None:
+            del self.port
+        else:
+            try:
+                self.port = int(port)
+            except ValueError:
+                raise InvalidURIError("Bogus port: {0!r}".format(port))
 
-        self._port = port
-
-        self._recompute_authority()
+    @authority.deleter
+    def authority(self):
+        self._userinfo = None
+        self._host = None
+        self._host_is_v6 = False
+        self._port = None
 
     def _recompute_authority(self):
         # After changing userinfo, host, or port, reassemble the authority
         # TODO does this need to exist, or should authority be lazy like
         # everything else?  several things check _authority...
         self._authority = _assemble(
-            ('', self._userinfo, '@'),
+            #('', self._userinfo, '@'),
+            # TODO yikes
+            ('', self._userinfo and self._maybe_escape(self._userinfo.encode('utf8'), also='/?#[]@'), '@'),
             ('', self._host, ''),
-            (':', self._port, ''),
+            (':', self._port and str(self._port), ''),
         )
 
         # TODO need to do this in several places...  maybe a renormalize()
@@ -456,75 +553,85 @@ class URI(object):
             self._path = '/' + self._path
 
     @property
+    def userinfo(self):
+        return self._userinfo
+
+    @userinfo.setter
+    def userinfo(self, value):
+        # XXX validate and stuff
+        self._userinfo = value
+
+        # XXX get rid of this guy
+        self._recompute_authority()
+
+    @userinfo.deleter
+    def userinfo(self):
+        self._userinfo = None
+
+    @property
     def host(self):
-        # Strip off square brackets.  IPv6 (and future IP address schemes)
-        # include them, but they're not really part of the address.  This is a
-        # clunky fix, but it works, because square brackets aren't legal
-        # anywhere else in a host.
-        return self._host.strip('[]')
+        return self._host
 
     @host.setter
     def host(self, value):
         # TODO validate
 
-        # Possibly add brackets for ipv6
-        if uri_grammar.match('IPv6address', value) or uri_grammar.match('IPvFuture', value):
-            value = '[' + value + ']'
-
         self._host = value
-        self._recompute_authority()
+        self._check_host_is_v6()
 
-    @property
-    def raw_host(self):
-        return self._host
+    def _check_host_is_v6(self):
+        """Flag whether the host is IPv6.  If it is, we need to add square
+        brackets around it when rendering the URL.
+        """
+        self._host_is_v6 = (
+            uri_grammar.match('IPv6address', self._host) or
+            uri_grammar.match('IPvFuture', self._host)
+        )
 
 
     @property
     def port(self):
-        if self._port is None or self._port == '':
+        if self._port is None:
             try:
                 return _default_ports[self._scheme]
             except KeyError:
                 return None
         else:
             # Must be an integer, or how the heck did it get here
-            return int(self._port)
+            return self._port
 
     @port.setter
     def port(self, value):
-        if value is None:
-            self._port = None
-        elif not isinstance(value, int) or value < 0:
+        if not isinstance(value, int) or value < 0:
             raise TypeError(
-                "Expected None or positive int; got {0!r}".format(value))
+                "Expected positive int; got {0!r}".format(value))
         else:
-            self._port = str(value)
+            self._port = value
 
-        self._recompute_authority()
-
-    @property
-    def raw_port(self):
-        return self._port
-
-    @raw_port.setter
-    def raw_port(self, value):
-        # TODO validate
-        self._port = value
-        self._recompute_authority()
+    @port.deleter
+    def port(self):
+        self._port = None
 
 
     @property
     def host_port(self):
+        host = self._host
+        if host and self._host_is_v6:
+            host = u'[' + host + u']'
+
         return _assemble(
-            ('', self._host, ''),
-            (':', self._port, ''),
+            ('', host, ''),
+            #(':', self._port, ''),
+            # TODO yikes
+            (':', self._port and str(self._port), ''),
         )
 
     @host_port.setter
     def host_port(self, value):
         # TODO escaping?  stuff?  unclear how this should work
         self._host, self._port = value.rsplit(':', 1)
-        self._recompute_authority()
+        self._host = self._host.strip('[]')
+        self._check_host_is_v6()
 
 
     @property
@@ -532,23 +639,34 @@ class URI(object):
         return self._path
 
     @path.setter
-    def path(self, string):
-        if string is None:
-            # Paths can't really be "missing" in the sense that other parts
-            # can, because they have no delimiter.  So a missing path is really
-            # an empty path
-            self._path = ''
+    def path(self, value):
+        # TODO should this accept bytes?  unicode?  same problem as authority...
+
+        # TODO get rid of this
+        if value is None:
+            del self.path
             return
 
-        string = self._maybe_escape(string, also='#?')
-
         # Can't have an authority (//foo) and a path unless something separates them
-        if string and self._authority and not string.startswith('/'):
-            string = '/' + string
+        # TODO don't check self.authority
+        if value and self.authority and not value.startswith('/'):
+            raise InvalidURIError(
+                "Can't have a relative path with an authority: {0!r}".format(value))
+
+        # TODO what
+        value = self._maybe_escape(value, also='#?')
 
         # TODO there's no real grammar rule that applies to path
-        self._path = string
+        self._path = value
 
+    @path.deleter
+    def path(self):
+        # Paths can't really be "missing" in the sense that other components
+        # can, because they have no delimiter.  A missing path is really an
+        # empty path.
+        self._path = ''
+
+    ### Query
 
     @property
     def query(self):
@@ -564,21 +682,20 @@ class URI(object):
 
         self._query = string
 
+    ### Fragment; boring
 
-    # Fragment; boring
     @property
     def fragment(self):
         return self._fragment
 
     @fragment.setter
     def fragment(self, string):
-        if string is None:
-            self._fragment = None
-            return
+        if not isinstance(string, unicode):
+            raise TypeError("Expected unicode, got: {0!r}".format(string))
 
-        match = uri_grammar.match('fragment', string)
-        # XXX ?????? escape?
-        if not match:
-            raise InvalidURIError("Invalid fragment")
+        # No validation required; there's no such thing as an invalid fragment
+        self._fragment = string
 
-        self._update_parts(match)
+    @fragment.deleter
+    def fragment(self):
+        self._fragment = None

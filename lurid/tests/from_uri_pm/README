@@ -1,0 +1,5 @@
+These tests are adapted from Perl's URI module, available here:
+http://search.cpan.org/~gaas/URI/URI.pm
+
+Test modules are named after the corresponding *.t file in the source
+distribution.
