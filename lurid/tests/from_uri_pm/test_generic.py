@@ -31,22 +31,24 @@ def test_simple():
     foo.scheme = "foo"
 
     # Opaque stuff
-    foo.opaque = "xxx"
+    foo.parse_opaque(b"xxx")
     assert foo.opaque == "xxx"
     assert str(foo) == b"foo:xxx#frag"
 
-    foo.opaque = ""
+    foo.parse_opaque(b"")
     assert foo.opaque == ""
     assert str(foo) == b"foo:#frag"
 
-    foo.opaque = " #?/"
-    assert foo.opaque == "%20%23?/"
+    # TODO unclear what sort of auto-escaping opaque should do; this is clearly
+    # not a parse
+    #foo.opaque = " #?/"
+    #assert foo.opaque == "%20%23?/"
 
-    foo.opaque = None
+    del foo.opaque
     assert foo.opaque == ""
     assert str(foo) == b"foo:#frag"
 
-    foo.opaque = "opaque"
+    foo.parse_opaque(b"opaque")
 
     # Fragments
     assert foo.fragment == "frag"
@@ -89,11 +91,11 @@ def test_hierarchy():
     assert foo.fragment == "frag"
 
     # Authority
-    foo.authority = "xxx"
+    foo.parse_authority(b"xxx")
     assert foo.authority == "xxx"
     assert str(foo) == b"foo://xxx/path?query#frag"
 
-    foo.authority = ""
+    foo.parse_authority(b"")
     assert foo.authority == ""
     assert str(foo) == b"foo:///path?query#frag"
 
@@ -101,11 +103,11 @@ def test_hierarchy():
     assert foo.authority is None
     assert str(foo) == b"foo:/path?query#frag"
 
-    foo.authority = "/? #;@&"
+    foo.parse_authority(b"/? #;@&")
     assert foo.authority == "%2F%3F%20%23;@&"
     assert str(foo) == b"foo://%2F%3F%20%23;@&/path?query#frag"
 
-    foo.authority = "host:80"
+    foo.parse_authority(b"host:80")
     assert foo.authority == "host:80"
     assert str(foo) == b"foo://host:80/path?query#frag"
 
@@ -161,13 +163,13 @@ def test_buildup():
     foo = URI()
     # DEVIATION: lurid refuses to magically change relative paths to absolute
     foo.path = "/path"
-    foo.authority = "auth"
+    foo.parse_authority(b"auth")
     assert str(foo) == b"//auth/path"
 
     # TODO: $foo = URI->new("", "http:");
     foo = URI()
     foo.query = "query"
-    foo.authority = "auth"
+    foo.parse_authority(b"auth")
     assert str(foo) == b"//auth?query"
 
     foo.path = "/path"
@@ -184,7 +186,7 @@ def test_buildup():
     assert foo.opaque == "bar"
     assert str(foo) == b"bar"
 
-    foo.opaque = "foo"
+    foo.parse_opaque(b"foo")
     assert foo.path == "foo"
     assert foo.opaque == "foo"
     assert str(foo) == b"foo"

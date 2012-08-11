@@ -217,7 +217,34 @@ class URI(object):
         /abs_path?query#fragment
         rel_path?query#fragment
 
+    URI components may be reassigned by simple property assignment:
+
+        uri = URI.parse('http://www.google.com/')
+        uri.scheme = u'ftp'
+        print uri
+        # ftp://www.google.com/
+
+    Note that components must be assigned unicode strings, never byte strings.
+
+    Compound components, such as `authority`, cannot be assigned to directly,
+    as this is somewhat ambiguous: should the assigned value be considered
+    already escaped, or is it a raw substring of another URI?  Instead, you can
+    use a `parse_*` method:
+
+        uri = URI.parse('http://www.google.com/')
+        uri.parse_authority('www.python.org')
+        print uri
+        # http://www.python.org/
+
+    As an alternative here, you can just assign to `userinfo, `host`, and
+    `port` directly.  The path and query support more fine-grained mutation;
+    see the documentation for the `path` and `query` properties.
+
+    Deleting `authority`, `path`, or `query` is supported.
     """
+
+    # TODO figure out what of the above actually belongs in the docstring and
+    # what should go elsewhere; module docstring?
 
     # Based on the RFC's example regex, in appendix B.
     # This will match any arbitrary string, with potentially nonsensical
@@ -250,7 +277,6 @@ class URI(object):
     # Defaults, and documentation for the attributes
     # TODO more of these
     _scheme = None
-    _authority = None
     _userinfo = None
     _host = None
     _host_is_ipv6 = False
@@ -293,7 +319,7 @@ class URI(object):
         # Authority needs some bonus parsing, conveniently done by the
         # authority setter
         if matchdict['authority'] is not None:
-            self.authority = matchdict['authority']
+            self.parse_authority(matchdict['authority'])
 
         # Path may need munging...
         self._path = matchdict['_path_thing']
@@ -325,46 +351,7 @@ class URI(object):
 
         return NotImplemented
 
-    def _update_parts(self, match):
-        """Given a match dict from the URI grammar, updates all the relevant
-        private attributes.  Parts with a match value of `None` will be
-        dutifully set to `None`.  Parts that don't appear in the match dict at
-        all will NOT be changed!
-        """
-
-        if 'scheme' in match:
-            self._scheme = match['scheme']
-
-        if 'authority' in match:
-            self._authority = match['authority']
-        if 'userinfo' in match:
-            self._userinfo = match['userinfo']
-        if 'host' in match:
-            self._host = match['host']
-        if 'port' in match:
-            self._port = match['port']
-
-        any_path_key = False
-        for path_key in ('path_abempty', 'path_absolute', 'path_noscheme', 'path_rootless', 'path_empty'):
-            if path_key not in match:
-                continue
-
-            any_path_key = True
-            if match[path_key] is not None:
-                self._path = match[path_key]
-                break
-        else:
-            if any_path_key:
-                self._path = None
-
-        if 'query' in match:
-            self._query = match['query']
-
-        if 'fragment' in match:
-            self._fragment = match['fragment']
-
-        # TODO: capture the authority /parts/; capture the path type, maybe?
-        # split path on ;s?  parse query!  urldecode!  omg all the things.
+    ### Internal utilities
 
     def _maybe_escape(self, string, also=None):
         # TODO do we need to detect % that isn't part of an escape?  (yes)
@@ -374,7 +361,6 @@ class URI(object):
 
         bad_char_rx = '([^' + re.escape(uric) + '])'
         return re.sub(bad_char_rx, lambda m: "%{0:02X}".format(ord(m.group())), string)
-
 
     ### Entire URI
     # TODO these should probably all be lazy
@@ -420,17 +406,59 @@ class URI(object):
             ('?', self._query, ''),
         )
 
-    @opaque.setter
-    def opaque(self, string):
-        if string is None:
-            string = ''
+    @opaque.deleter
+    def opaque(self):
+        del self.authority
+        self._path = None
+        self._query = None
 
-        string = self._maybe_escape(string, also='#')
+    # TODO it seems almost reasonable to want to assign a unicode to this
+    # directly, for schemes that outright do not support or care about
+    # authority and path.  see what the rfc says about this; i think it still
+    # requires that the opaque part match the grammar, in which case assignment
+    # may not work, because is that question mark part of the path or part of
+    # the query?
+    # ...this COULD be safe if we assumed no authority (unless there's a // of
+    # course), no query, and a single path component.  but then parts would get
+    # escaped when that may not be the intention.  hm hm hm.
+    # perhaps assignment should mean "do whatever it takes to make this come
+    # out right"?
+    def parse_opaque(self, value):
+        # TODO make this a helper method jesus
+        assert isinstance(value, str)
 
-        # TODO this uses relative-ref.  is that right???
-        # TODO should this clear out authority stuff
-        match = uri_grammar.match('relative-opaque', string)
-        self._update_parts(match)
+        # According to the latest RFC, the "opaque" bit is really something
+        # like:
+        #     relative-part [? query]
+        # where relative-part is EITHER:
+        # - an authority and an optional absolute path
+        # - an absolute path
+        # - a relative path
+        # - or nothing.
+        # That's not too hard to parse, right?
+
+        # Find the query first.  First question mark has to be the query
+        # delimiter; it's not allowed anywhere before that.
+        relpart, qmark, query = value.partition('?')
+
+        if query:
+            self._query = query
+        else:
+            # TODO is "?" canonically a distinct query?
+            self._query = None
+
+        # Now look for an authority
+        if relpart.startswith('//'):
+            relpart = relpart[2:]
+
+            # Next slash marks the path
+            authority, _, path = relpart.partition('/')
+            self._path = '/' + path
+            self.parse_authority(authority)
+        else:
+            # No authority at all
+            del self.authority
+            self._path = relpart
 
     ### Authority: userinfo, host, and port
 
@@ -454,11 +482,14 @@ class URI(object):
             (':', self._port and str(self._port), ''),
         )
 
-    @authority.setter
-    def authority(self, value):
-        # TODO should this accept unicode assignment?  what does that imply?  similar to assigning to the entire query or path?
-        if isinstance(value, unicode):
-            value = str(value)
+    @authority.deleter
+    def authority(self):
+        self._userinfo = None
+        self._host = None
+        self._host_is_v6 = False
+        self._port = None
+
+    def parse_authority(self, value):
         if not isinstance(value, str):
             raise TypeError("Expected str, got {0!r}".format(value))
 
@@ -505,30 +536,11 @@ class URI(object):
             except ValueError:
                 raise InvalidURIError("Bogus port: {0!r}".format(port))
 
-    @authority.deleter
-    def authority(self):
-        self._userinfo = None
-        self._host = None
-        self._host_is_v6 = False
-        self._port = None
-
-    def _recompute_authority(self):
-        # After changing userinfo, host, or port, reassemble the authority
-        # TODO does this need to exist, or should authority be lazy like
-        # everything else?  several things check _authority...
-        self._authority = _assemble(
-            #('', self._userinfo, '@'),
-            # TODO yikes
-            ('', self._userinfo and self._maybe_escape(self._userinfo.encode('utf8'), also='/?#[]@'), '@'),
-            ('', self._host, ''),
-            (':', self._port and str(self._port), ''),
-        )
-
-        # TODO need to do this in several places...  maybe a renormalize()
-        # called after every set
-        if self._authority and self._path and self._path[0] != '/':
-            self._path = '/' + self._path
-
+    # TODO should this be split into username and password?  how would that
+    # affect the setter?
+    # TODO what does the RFC say about even allowing passwords?  i seem to
+    # recall they are heavily discouraged; perhaps we shouldn't allow having
+    # them at all, or should mask them out or delete them when serializing
     @property
     def userinfo(self):
         return self._userinfo
@@ -538,13 +550,14 @@ class URI(object):
         # XXX validate and stuff
         self._userinfo = value
 
-        # XXX get rid of this guy
-        self._recompute_authority()
-
     @userinfo.deleter
     def userinfo(self):
         self._userinfo = None
 
+    # TODO should this return some kind of network address object?  is that a
+    # pain in the ass if you just want a string?  seems nice to be able to take
+    # the domain and connect to it easily, or pop off some subdomains, or
+    # whatever
     @property
     def host(self):
         return self._host
