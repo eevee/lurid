@@ -160,6 +160,17 @@ _default_ports = dict(
     ssh=22,
 )
 
+def _require_type(value, type_):
+    """Oh nooo, type-checking!
+
+    Due to the fiddly nature of URIs and Python 2's handwavey behavior with
+    bytes vs unicode, quite a few `URI` methods expect to get only ONE of
+    either bytes or unicode.  This function enforces that.
+    """
+    if not isinstance(value, type_):
+        raise TypeError("Expected {0}, got {1!r}".format(
+            type_.__name__, value))
+
 
 def _assemble(*parts):
     # TODO docs
@@ -301,9 +312,7 @@ class URI(object):
 
     @classmethod
     def parse(cls, string, encoding='utf8'):
-        # TODO
-        assert isinstance(string, str)
-
+        _require_type(string, str)
 
 
         self = cls(encoding='utf8')
@@ -389,8 +398,7 @@ class URI(object):
 
     @scheme.setter
     def scheme(self, string):
-        if not isinstance(string, unicode):
-            raise TypeError("Expected unicode, got: {0!r}".format(string))
+        _require_type(string, unicode)
         if not uri_grammar.match('scheme', string):
             raise InvalidURIError("Invalid scheme: {0!r}".format(string))
 
@@ -428,8 +436,7 @@ class URI(object):
     # perhaps assignment should mean "do whatever it takes to make this come
     # out right"?
     def parse_opaque(self, value):
-        # TODO make this a helper method jesus
-        assert isinstance(value, str)
+        _require_type(value, str)
 
         # According to the latest RFC, the "opaque" bit is really something
         # like:
@@ -494,8 +501,7 @@ class URI(object):
         self._port = None
 
     def parse_authority(self, value):
-        if not isinstance(value, str):
-            raise TypeError("Expected str, got {0!r}".format(value))
+        _require_type(value, str)
 
         # TODO do this in several places...
         # TODO this makes '' allowed even though it's technically relative...
@@ -598,7 +604,7 @@ class URI(object):
     def port(self, value):
         if not isinstance(value, int) or value < 0:
             raise TypeError(
-                "Expected positive int; got {0!r}".format(value))
+                "Expected positive int, got {0!r}".format(value))
         else:
             self._port = value
 
@@ -664,8 +670,7 @@ class URI(object):
         self._path = []
 
     def parse_path(self, value):
-        # TODO sigh
-        assert isinstance(value, str)
+        _require_type(value, str)
 
         # TODO there's no real grammar rule that applies to path but i would
         # kinda like to enforce one.  but what?  allow unicode assignment?
@@ -705,8 +710,7 @@ class URI(object):
 
     @path_string.setter
     def path_string(self, value):
-        # TODO
-        assert isinstance(value, unicode)
+        _require_type(value, unicode)
 
         # TODO should canonicalize this (and other path parse/assign
         # mechanisms): for example i believe '///' is always considered
@@ -728,7 +732,6 @@ class URI(object):
             self._maybe_escape(part.encode(self._encoding), also='[]/?#')
             for part in self._path
         )
-
 
     ### Query
 
@@ -753,12 +756,11 @@ class URI(object):
         return self._fragment
 
     @fragment.setter
-    def fragment(self, string):
-        if not isinstance(string, unicode):
-            raise TypeError("Expected unicode, got: {0!r}".format(string))
+    def fragment(self, value):
+        _require_type(value, unicode)
 
         # No validation required; there's no such thing as an invalid fragment
-        self._fragment = string
+        self._fragment = value
 
     @fragment.deleter
     def fragment(self):
