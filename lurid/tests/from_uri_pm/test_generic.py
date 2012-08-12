@@ -86,7 +86,7 @@ def test_hierarchy():
     # Accessors
     assert foo.scheme == "foo"
     assert foo.authority == "host:80"
-    assert foo.path == "/path"
+    assert foo.path_string == "/path"
     assert foo.query == "query"
     assert foo.fragment == "frag"
 
@@ -112,29 +112,29 @@ def test_hierarchy():
     assert str(foo) == b"foo://host:80/path?query#frag"
 
     # Path
-    foo.path = "/foo"
-    assert foo.path == "/foo"
+    foo.path_string = "/foo"
+    assert foo.path_string == "/foo"
     assert str(foo) == b"foo://host:80/foo?query#frag"
 
-    foo.path = "/bar"
-    assert foo.path == "/bar"
+    foo.path_string = "/bar"
+    assert foo.path_string == "/bar"
     assert str(foo) == b"foo://host:80/bar?query#frag"
 
-    foo.path = ""
-    assert foo.path == ""
+    foo.path_string = ""
+    assert foo.path_string == ""
     assert str(foo) == b"foo://host:80?query#frag"
 
-    foo.path = None
-    assert foo.path == ""
+    del foo.path
+    assert foo.path_string == ""
     assert str(foo) == b"foo://host:80?query#frag"
 
     # DEVIATION: lurid refuses to magically change relative paths to absolute
-    foo.path = "/@;/?#"
-    assert foo.path == "/@;/%3F%23"
+    foo.path_string = "/@;/?#"
+    assert foo.path_escaped == "/@;/%3F%23"
     assert str(foo) == b"foo://host:80/@;/%3F%23?query#frag"
 
-    foo.path = "/path"
-    assert foo.path == "/path"
+    foo.path_string = "/path"
+    assert foo.path_string == "/path"
     assert str(foo) == b"foo://host:80/path?query#frag"
 
     # Query
@@ -162,7 +162,7 @@ def test_hierarchy():
 def test_buildup():
     foo = URI()
     # DEVIATION: lurid refuses to magically change relative paths to absolute
-    foo.path = "/path"
+    foo.path_string = "/path"
     foo.parse_authority(b"auth")
     assert str(foo) == b"//auth/path"
 
@@ -172,26 +172,26 @@ def test_buildup():
     foo.parse_authority(b"auth")
     assert str(foo) == b"//auth?query"
 
-    foo.path = "/path"
+    foo.path_string = "/path"
     assert str(foo) == b"//auth/path?query"
 
     foo = URI.parse(b"")
-    assert foo.path == ""
-    foo.path = "foo"
-    assert foo.path == "foo"
+    assert foo.path_string == ""
+    foo.parse_path(b"foo")
+    assert foo.path_string == "foo"
     assert str(foo) == b"foo"
 
-    foo.path = "bar"
-    assert foo.path == "bar"
+    foo.parse_path(b"bar")
+    assert foo.path_string == "bar"
     assert foo.opaque == "bar"
     assert str(foo) == b"bar"
 
     foo.parse_opaque(b"foo")
-    assert foo.path == "foo"
+    assert foo.path_string == "foo"
     assert foo.opaque == "foo"
     assert str(foo) == b"foo"
 
-    foo.path = ""
+    foo.parse_path(b"")
     assert str(foo) == b""
 
     assert foo.query == None

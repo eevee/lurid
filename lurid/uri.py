@@ -246,6 +246,10 @@ class URI(object):
     # TODO figure out what of the above actually belongs in the docstring and
     # what should go elsewhere; module docstring?
 
+    # TODO does it even make sense to have `authority` as an accessor?  does it
+    # return something escaped or not?  fuck.  applies to `opaque`, too, and
+    # the question was raised by `path` and `query`
+
     # Based on the RFC's example regex, in appendix B.
     # This will match any arbitrary string, with potentially nonsensical
     # results -- but that's a good thing, so the level of strictness can be
@@ -281,7 +285,7 @@ class URI(object):
     _host = None
     _host_is_ipv6 = False
     _port = None
-    _path = None
+    _path = ()
     _query = None
     _fragment = None
 
@@ -322,7 +326,7 @@ class URI(object):
             self.parse_authority(matchdict['authority'])
 
         # Path may need munging...
-        self._path = matchdict['_path_thing']
+        self.parse_path(matchdict['_path_thing'])
 
         # Query needs splitting
         self._query = matchdict['query']
@@ -402,14 +406,14 @@ class URI(object):
     def opaque(self):
         return _assemble(
             ('//', self.authority, ''),
-            ('', self._path, ''),
+            ('', self.path_escaped, ''),
             ('?', self._query, ''),
         )
 
     @opaque.deleter
     def opaque(self):
         del self.authority
-        self._path = None
+        self._path = []
         self._query = None
 
     # TODO it seems almost reasonable to want to assign a unicode to this
@@ -453,12 +457,12 @@ class URI(object):
 
             # Next slash marks the path
             authority, _, path = relpart.partition('/')
-            self._path = '/' + path
+            self.parse_path('/' + path)
             self.parse_authority(authority)
         else:
             # No authority at all
             del self.authority
-            self._path = relpart
+            self.parse_path(relpart)
 
     ### Authority: userinfo, host, and port
 
@@ -495,7 +499,7 @@ class URI(object):
 
         # TODO do this in several places...
         # TODO this makes '' allowed even though it's technically relative...
-        if self.path and not self.path.startswith('/'):
+        if self._path and self._path[0] != '':
             raise InvalidURIError(
                 "Can't have an authority with a relative path: {0!r}".format(self.path))
 
@@ -623,38 +627,108 @@ class URI(object):
         self._host = self._host.strip('[]')
         self._check_host_is_v6()
 
+    ### Path
 
     @property
     def path(self):
-        return self._path
+        """Returns the path, as a tuple of path components.
+
+        This is necessary because it's entirely plausible to have a URI with a
+        path of "/foo%2fbar", which is a single path component that happens to
+        contain a slash.
+        """
+        # TODO i think this should be a mutable object
+        # TODO an absolute path is only marked by having an empty string in
+        # front; that seems silly
+        # TODO maybe give this a better name like _path_parts
+        return tuple(self._path)
 
     @path.setter
     def path(self, value):
-        # TODO should this accept bytes?  unicode?  same problem as authority...
+        if isinstance(value, basestring):
+            raise TypeError("Expected iterable, got {0!r}".format(value))
 
-        # TODO get rid of this
-        if value is None:
-            del self.path
-            return
+        # TODO i think this raises a TypeError that is lame
+        path_parts = list(value)
 
         # Can't have an authority (//foo) and a path unless something separates them
         # TODO don't check self.authority
-        if value and self.authority and not value.startswith('/'):
+        if path_parts and self.authority and path_parts[0] != u'':
             raise InvalidURIError(
                 "Can't have a relative path with an authority: {0!r}".format(value))
 
-        # TODO what
-        value = self._maybe_escape(value, also='#?')
-
-        # TODO there's no real grammar rule that applies to path
-        self._path = value
+        self._path = path_parts
 
     @path.deleter
     def path(self):
-        # Paths can't really be "missing" in the sense that other components
-        # can, because they have no delimiter.  A missing path is really an
-        # empty path.
-        self._path = ''
+        self._path = []
+
+    def parse_path(self, value):
+        # TODO sigh
+        assert isinstance(value, str)
+
+        # TODO there's no real grammar rule that applies to path but i would
+        # kinda like to enforce one.  but what?  allow unicode assignment?
+        # bytestrings containing encoded utf8?  what if there's a question mark
+        # in the parse string?
+
+        parts = [
+            urllib.unquote(part).decode(self._encoding)
+            for part in value.split('/')
+        ]
+
+        self._path = parts
+
+    # TODO add a path_string property i think.  assigning to it sorta kinda
+    # makes sense most of the time.  or at least would be unambiguous.
+
+    @property
+    def path_string(self):
+        """The path, as a string.
+
+        While mighty convenient, this property has a serious pitfall: it can't
+        preserve the identity of escaped slashes in path components, so it
+        isn't quite idempotent.  Observe:
+
+            uri = URI.parse('/more%2fless')
+            uri.path
+            # ('', 'more/less')
+            uri.path_string
+            # '/more/less'
+            uri.path_string = uri.path_string
+            uri.path
+            # ('', 'more', 'less')
+
+        In the interests of correctness, please avoid this property.
+        """
+        return u'/'.join(self._path)
+
+    @path_string.setter
+    def path_string(self, value):
+        # TODO
+        assert isinstance(value, unicode)
+
+        # TODO should canonicalize this (and other path parse/assign
+        # mechanisms): for example i believe '///' is always considered
+        # equivalent to '/'.  maybe.  find out.
+        self._path = value.split(u'/')
+
+    @path_string.deleter
+    def path_string(self):
+        # Same as deleting the path, but hey, why not.
+        self._path = []
+
+    @property
+    def path_escaped(self):
+        """Returns the path, appropriate for direct inclusion in a URI.
+
+        `path_escaped` and `parse_path` are idempotent.
+        """
+        return '/'.join(
+            self._maybe_escape(part.encode(self._encoding), also='[]/?#')
+            for part in self._path
+        )
+
 
     ### Query
 
